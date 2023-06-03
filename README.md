@@ -27,8 +27,14 @@ After installing virtual ports, build with codelite and run as root :
     cd Release
     sudo ./rf95_rtu_bridge /dev/tnt0
 
+![rf95_rtu_bridge](https://github.com/epsilonrt/rf95-rtu-bridge/blob/main/doc/images/rf95_rtu_bridge.png)
+
 Upload the Arduino/rf95_modbus_slave_tester sketch to an Arduino board equipped with an RFM95 shield.
+
+![rf95_modbus_slave_tester](https://github.com/epsilonrt/rf95-rtu-bridge/blob/main/doc/images/rf95_modbus_slave_tester.png)
 
 You can then use mbpoll to send a test modbus command :
 
      mbpoll -m rtu -b38400 -a20 -t0 -r1 -c3 -v /dev/tnt1
+
+![mbpoll](https://github.com/epsilonrt/rf95-rtu-bridge/blob/main/doc/images/mbpoll.png)

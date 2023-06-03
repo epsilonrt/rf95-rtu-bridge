@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CodeLite_Workspace Name="rf95" Database="" Version="10.0.0">
-  <Project Name="rf95_rtu_bridge" Path="rf95_rtu_bridge.project" Active="No"/>
-  <Project Name="pcf8574_blink" Path="tests/pcf8574_blink/pcf8574_blink.project" Active="Yes"/>
+  <Project Name="rf95_rtu_bridge" Path="rf95_rtu_bridge.project" Active="Yes"/>
+  <Project Name="pcf8574_blink" Path="tests/pcf8574_blink/pcf8574_blink.project" Active="No"/>
   <Project Name="popl_test" Path="tests/popl_test/popl_test.project" Active="No"/>
   <BuildMatrix>
     <WorkspaceConfiguration Name="Debug" Selected="yes">
