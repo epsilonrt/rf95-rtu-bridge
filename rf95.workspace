@@ -3,18 +3,27 @@
   <Project Name="rf95_rtu_bridge" Path="rf95_rtu_bridge.project" Active="Yes"/>
   <Project Name="pcf8574_blink" Path="tests/pcf8574_blink/pcf8574_blink.project" Active="No"/>
   <Project Name="popl_test" Path="tests/popl_test/popl_test.project" Active="No"/>
+  <Project Name="radiohead" Path="../../RadioHead/piduino/radiohead.project" Active="No"/>
+  <Project Name="encrypted_client" Path="../../RadioHead/piduino/examples/crypto/encrypted_client/encrypted_client.project" Active="No"/>
+  <Project Name="encrypted_server" Path="../../RadioHead/piduino/examples/crypto/encrypted_server/encrypted_server.project" Active="No"/>
   <BuildMatrix>
     <WorkspaceConfiguration Name="Debug" Selected="yes">
       <Environment/>
       <Project Name="rf95_rtu_bridge" ConfigName="Debug"/>
       <Project Name="pcf8574_blink" ConfigName="Debug"/>
       <Project Name="popl_test" ConfigName="Debug"/>
+      <Project Name="radiohead" ConfigName="Debug"/>
+      <Project Name="encrypted_client" ConfigName="Debug"/>
+      <Project Name="encrypted_server" ConfigName="Debug"/>
     </WorkspaceConfiguration>
-    <WorkspaceConfiguration Name="Release" Selected="no">
+    <WorkspaceConfiguration Name="Release" Selected="yes">
       <Environment/>
       <Project Name="rf95_rtu_bridge" ConfigName="Release"/>
       <Project Name="pcf8574_blink" ConfigName="Release"/>
       <Project Name="popl_test" ConfigName="Release"/>
+      <Project Name="radiohead" ConfigName="Release"/>
+      <Project Name="encrypted_client" ConfigName="Release"/>
+      <Project Name="encrypted_server" ConfigName="Release"/>
     </WorkspaceConfiguration>
   </BuildMatrix>
 </CodeLite_Workspace>

@@ -1,6 +1,6 @@
 // rf95_modbus_bridge
 // Pont Série <-> LoRa avec un RFM95
-// 
+//
 // rf95_modbus_bridge -h
 //
 //  rf95_modbus_bridge [OPTION]... serial_port
@@ -10,12 +10,14 @@
 //    -v, --verbose                be verbose
 //    -D, --daemon                 be daemonized
 //    -b, --baudrate arg (=38400)  set serial baudrate
-//    
+//
 // This example code is in the public domain.
 #include <Piduino.h>  // All the magic is here ;-)
 #include <SPI.h>
 #include <RH_RF95.h>
 #include <RHPcf8574Pin.h>
+#include <RHEncryptedDriver.h>
+#include <AES.h>
 
 // Modifier les valeurs ci-dessous en fonction de la carte utilisée
 // ---------------------------
@@ -30,6 +32,9 @@ const float frequency = 868.0;
 
 // Singleton instance of the radio driver
 RH_RF95 rf95 (CsPin, Dio0Pin);
+AES128 cipher;                               // Chiffreur AES128 (lib Crypto)
+RHEncryptedDriver encryptDrv(rf95, cipher);  // Driver qui assemble chiffreur et transmetteur RF
+RHGenericDriver *driver; // Pointeur qui permettra de manipuler de la même façon, driver rf95 ou encrypt
 
 // On utilise un port série Piduino, car le port série Arduino introduit des
 // délais qui ne permettent pas de respecter les délais Modbus RTU
@@ -44,6 +49,7 @@ unsigned long charTime; // temps pour transmettre un octect en microsecondes (1c
 unsigned long frameInterval; // temps qui doit séparer 2 trames modbus (3.5c)
 unsigned long t0; // temps précédent en microsecondes
 uint8_t txlen; // nombre de caractères reçus de la liaison série
+bool isEncrypted = false;
 
 using namespace std;
 
@@ -62,6 +68,9 @@ void setup() {
 
   auto verbose_option = op.get_option<Piduino::Switch> ('v');
   auto baudrate_option = op.add<Piduino::Value<unsigned long>> ("b", "baudrate", "set serial baudrate", 38400);
+  auto key_option = op.add<Piduino::Value<std::string>> ("k", "key", "secret key for AES128 encryption, must be 16 characters long");
+  op.parse (argc, argv);
+
 
   if (help_option->is_set()) {
 
@@ -76,6 +85,26 @@ void setup() {
 
     cerr << "Serial port must be provided !" << endl << op << endl;
     exit (EXIT_FAILURE);
+  }
+
+  if (key_option->is_set()) {
+    string  key = key_option->value();
+
+    if (cipher.setKey (reinterpret_cast<const uint8_t *> (key.data()), key.size())) {
+
+      cout << "Encryption enabled" << endl;
+      driver = & encryptDrv;
+      isEncrypted = true;
+    }
+    else {
+
+      cerr << "Unable to set secret key !" << endl << op << endl;
+      exit (EXIT_FAILURE);
+    }
+  }
+  else {
+
+    driver = & rf95;
   }
 
   string portName = op.non_option_args() [0];
@@ -157,7 +186,7 @@ void loop() {
     if (txlen >= 4) {
 
       t0 = micros(); // on mémorise le temps pour le calcul du temps de réponse
-      rf95.send (txbuf, txlen);
+      driver->send (txbuf, txlen);
     }
     else {
 
@@ -169,11 +198,11 @@ void loop() {
     txlen = 0;
   }
 
-  if (rf95.available()) {
+  if (driver->available()) {
     // On a reçu une trame
     uint8_t rxlen = sizeof (rxbuf);
     // Should be a message for us now
-    if (rf95.recv ( (uint8_t *) rxbuf, &rxlen)) {
+    if (driver->recv ( (uint8_t *) rxbuf, &rxlen)) {
 
       if (rxlen >= 4) {
         // le message est suffisament long, on l'envoie sur la liaisons série
@@ -190,7 +219,7 @@ void loop() {
 
 // Affiche un message modbus sur la console en Hexa
 void printModbusMessage (const uint8_t * msg, uint8_t len, bool req) {
-  
+
   if (len) {
     char str[3]; // buffer pour sprintf
     for (uint8_t i = 0; i < len; i++) {
