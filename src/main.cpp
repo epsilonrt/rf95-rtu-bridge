@@ -1,54 +1,64 @@
 // rf95_modbus_bridge
-// Pont Série <-> LoRa avec un RFM95
+// Modbus RTU bridge between serial port and RF95 radio
 //
-// rf95_modbus_bridge -h
+// rf95_rtu_bridge -h
 //
-//  rf95_modbus_bridge [OPTION]... serial_port
-//          serial_port:    serial port path, eg /dev/ttyUSB0, /dev/tnt1...
-//  Allowed options:
-//    -h, --help                   produce help message
-//    -v, --verbose                be verbose
-//    -D, --daemon                 be daemonized
-//    -b, --baudrate arg (=38400)  set serial baudrate
-//
+// rf95_rtu_bridge [OPTION]... serial_port
+//   serial_port:  serial port path, eg /dev/ttyUSB0, /dev/tnt1...
+// Allowed options:
+//   -h, --help                   produce help message
+//   -v, --verbose                be verbose
+//   -D, --daemon                 be daemonized
+//   -b, --baudrate arg (=38400)  set serial baudrate
+//   -t, --txled arg              set the Tx led pin number (Ino number if --wirebus not used)
+//   -r, --rxled arg              set the Rx led pin number (Ino number if --wirebus not used)
+//   -w, --wirebus arg            set the wire bus where a PCF8574 wich Tx and/or Rx led is connected
+//   -k, --key arg                secret key for AES128 encryption, must be 16 characters long//
 // This example code is in the public domain.
 #include <Piduino.h>  // All the magic is here ;-)
 #include <SPI.h>
 #include <RH_RF95.h>
 #include <RHPcf8574Pin.h>
+#include <RHGpioPin.h>
 #include <RHEncryptedDriver.h>
 #include <AES.h>
 
-// Modifier les valeurs ci-dessous en fonction de la carte utilisée
+// Choose or modify the following lines to match your hardware configuration
 // ---------------------------
-const int LedPin = 0;
-const int WireBus = 2;
-const uint8_t CsPin = 10;
-const uint8_t Dio0Pin = 0;
 
-const float frequency = 868.0;
+// NanoPi /dev/spidev0.0
+// uint8_t CsPin = 10;
+// uint8_t Dio0Pin = 0;
+
+// LoRasSpi /dev/spidev0.0
+uint8_t CsPin = 10;
+uint8_t Dio0Pin = 6;
+
+float frequency = 868.0;
 // ---------------------------
 // End of configuration
 
-// Singleton instance of the radio driver
-RH_RF95 rf95 (CsPin, Dio0Pin);
-AES128 cipher;                               // Chiffreur AES128 (lib Crypto)
-RHEncryptedDriver encryptDrv (rf95, cipher); // Driver qui assemble chiffreur et transmetteur RF
-RHGenericDriver *driver; // Pointeur qui permettra de manipuler de la même façon, driver rf95 ou encrypt
+RH_RF95 *rf95 = nullptr;  //  Pointer on the RF95 driver
+RHEncryptedDriver *encryptDrv = nullptr;  //  Driver which encrypts the data
+RHGenericDriver *driver = nullptr; //  Generic driver which can be RF95 or encrypted
+AES128 cipher;                               // cipher AES128
 
-// On utilise un port série Piduino, car le port série Arduino introduit des
-// délais qui ne permettent pas de respecter les délais Modbus RTU
+// We use a Piduino serial port, because the Arduino serial port introduces
+// delays that do not allow to respect the Modbus RTU delays
 Piduino::SerialPort serial;
 
-// Contrôleur des leds NanoPi4DinBox
+// Led controler on NanoPi4DinBox
 // cf https://github.com/epsilonrt/poo-toolbox
-Pcf8574 pcf8574;
-RHPcf8574Pin led (LedPin, pcf8574); // Led Rx/Tx
+Pcf8574 pcf8574; 
 
-unsigned long charInterval; // temps pour transmettre un octect en microsecondes (1.5c)
-unsigned long frameInterval; // temps qui doit séparer 2 trames modbus (3.5c)
-unsigned long t0; // temps précédent en microsecondes
-uint8_t txlen; // nombre de caractères reçus de la liaison série
+//  Tx and Rx led which are used to indicate the transmission and reception of data
+RHPin *txled = nullptr; // Pointer on the led Tx (GPIO pin or PCF8574)
+RHPin *rxled = nullptr; // Pointer on the led Rx (GPIO pin or PCF8574)
+
+unsigned long charInterval; // maximum time  between 2 characters (1.5c)
+unsigned long frameInterval; // minimum time between 2 frames (3.5c)
+unsigned long t0; // time of the last request
+uint8_t txlen; // length of the string from the serial port
 bool isEncrypted = false;
 
 using namespace std;
@@ -57,46 +67,53 @@ using namespace std;
 // msg:  buffer contenant le message
 // len:  taille du message
 // req:  true les octets sont encadrés par [], false par <>
-void printModbusMessage (const uint8_t * msg, uint8_t len, bool req = true);
+void printModbusMessage (const uint8_t *msg, uint8_t len, bool req = true);
 
 // Calcule le CRC d'une trame
-word calcCrc (byte address, byte* pduFrame, byte pduLen);
+word calcCrc (byte address, byte *pduFrame, byte pduLen);
 
 void setup() {
 
-  // Configure les options et paramètres passés par la ligne de commande
+  // Setting up command line options and parameters, cf
   // https://github.com/epsilonrt/popl/blob/master/example/popl_example.cpp
-  Piduino::OptionParser & op = CmdLine;
+  Piduino::OptionParser &op = CmdLine;
   auto help_option = op.get_option<Piduino::Switch> ('h');
 
   auto verbose_option = op.get_option<Piduino::Switch> ('v');
   auto baudrate_option = op.add<Piduino::Value<unsigned long>> ("b", "baudrate", "set serial baudrate", 38400);
+  auto txled_option = op.add<Piduino::Value<int>> ("t", "txled", "set the Tx led pin number (Ino number if --wirebus not used)");
+  auto rxled_option = op.add<Piduino::Value<int>> ("r", "rxled", "set the Rx led pin number (Ino number if --wirebus not used)");
+  auto wirebus_option = op.add<Piduino::Value<int>> ("w", "wirebus", "set the wire bus where a PCF8574 wich Tx and/or Rx led is connected");
   auto key_option = op.add<Piduino::Value<std::string>> ("k", "key", "secret key for AES128 encryption, must be 16 characters long");
   op.parse (argc, argv);
 
 
   if (help_option->is_set()) {
 
-    cout << Piduino::System::progName() << " [OPTION]... serial_port" << endl;
-    cout << "  serial_port:\tserial port path, eg /dev/ttyUSB0, /dev/tnt1..." << endl;
-    cout << op << endl;
+    std::cout << Piduino::System::progName() << " [OPTION]... serial_port" << endl;
+    std::cout << "  serial_port:\tserial port path, eg /dev/ttyUSB0, /dev/tnt1..." << endl;
+    std::cout << op << endl;
     exit (EXIT_SUCCESS);
   }
 
-
   if (op.non_option_args().size() < 1) {
 
-    cerr << "Serial port must be provided !" << endl << op << endl;
+    cerr << "A serial port must be specified!" << endl << op << endl;
     exit (EXIT_FAILURE);
   }
+
+  // TODO: detect the default spidev device with Piduino::System::findSpidev()
+  rf95 = new RH_RF95 (CsPin, Dio0Pin); // Pointeur sur le driver RF95
 
   if (key_option->is_set()) {
     string  key = key_option->value();
 
     if (cipher.setKey (reinterpret_cast<const uint8_t *> (key.data()), key.size())) {
 
-      cout << "Encryption enabled" << endl;
-      driver = & encryptDrv;
+      encryptDrv = new RHEncryptedDriver (*rf95, cipher); // Driver qui assemble chiffreur et transmetteur RF
+
+      std::cout << "Encryption enabled" << endl;
+      driver = encryptDrv;
       isEncrypted = true;
     }
     else {
@@ -107,14 +124,64 @@ void setup() {
   }
   else {
 
-    driver = & rf95;
+    driver = rf95;
+  }
+
+  if (txled_option->is_set() || rxled_option->is_set()) {
+    // process the --txled and --rxled options
+    // if --wirebus is not set, we use GPIO pins
+
+    if (wirebus_option->is_set()) {
+
+      int wireBus = wirebus_option->value();
+
+      // Open the I2C bus where the PCF8574 is connected
+      Wire.begin (wireBus);
+      if (! pcf8574.begin()) {
+
+        cerr << "Unable to connect to PCF8574. Please check the wiring, slave address, and bus ID!" << endl;
+        exit (EXIT_FAILURE);
+      }
+      if (txled_option->is_set()) {
+        int txLedPin = txled_option->value();
+
+        txled = new RHPcf8574Pin (txLedPin, pcf8574); // Led Tx
+        std::cout << "Use PCF8574 on bus " << wireBus << " for Tx led " << txLedPin << endl;
+        rf95->setTxLed (*txled);
+      }
+      if (rxled_option->is_set()) {
+        int rxLedPin = rxled_option->value();
+
+        rxled = new RHPcf8574Pin (rxLedPin, pcf8574); // Led Rx
+        std::cout << "Use PCF8574 on bus " << wireBus << " for Rx led " << rxLedPin << endl;
+        rf95->setRxLed (*rxled);
+      }
+
+    }
+    else {
+
+      if (rxled_option->is_set()) {
+        int rxLedPin = rxled_option->value();
+
+        rxled = new RHGpioPin (rxLedPin); // Led Rx
+        std::cout << "Use GPIO pin " << rxLedPin << " for Rx led" << endl;
+        rf95->setRxLed (*rxled);
+      }
+      if (txled_option->is_set()) {
+        int txLedPin = txled_option->value();
+
+        txled = new RHGpioPin (txLedPin); // Led Tx
+        std::cout << "Use GPIO pin " << txLedPin << " for Tx led" << endl;
+        rf95->setTxLed (*txled);
+      }
+    }
   }
 
   string portName = op.non_option_args() [0];
   unsigned long baudrate = baudrate_option->value();
-  // Fin de traitement de la ligne de commande
+  // end of command line options
 
-  // Configuration du port série
+  //  Open the serial port
   serial.setPortName (portName);
   serial.setParity (Piduino::SerialPort::EvenParity);
   serial.setBaudRate (baudrate);
@@ -125,44 +192,35 @@ void setup() {
     exit (EXIT_FAILURE);
   }
 
-  // Calcul des temps pour la trame
+  // RTU Modbus timing, the silence between two frames must be at least 3.5T
+  // and the time between two characters must be less than 1.5T
   if (baudrate > 19200UL) {
-    
+    // if baudrate > 19200, we use a delay of 750us between two characters
+    // and 1750us between two frames
     charInterval = 750;
     frameInterval = 1750;
   }
   else {
-    
+
     charInterval = 16500000UL / baudrate; // 1T * 1.5 = T1.5, 1T = 11 bits
     frameInterval = 38500000UL / baudrate; // 1T * 3.5 = T3.5, 1T = 11 bits
   }
 
-  cout << Piduino::System::progName() << ": " << portName << ", " << baudrate << " bd, " << frameInterval << "us" << endl;
-
-  // Ouverture du bus I2c où se trouve le PCF8574 qui commande les leds
-  Wire.begin (WireBus);
-  if (! pcf8574.begin()) {
-
-    cerr << "Unable to connect to PCF8574, check wiring, slave address and bus id !" << endl;
-    exit (EXIT_FAILURE);
-  }
-
-  rf95.setTxLed (led);
-  rf95.setRxLed (led);
+  std::cout << Piduino::System::progName() << ": " << portName << ", " << baudrate << " bd, " << frameInterval << "us" << endl;
 
   // Defaults after init are 434.0MHz, 13dBm,
   // Bw = 125 kHz, Cr = 5 (4/5), Sf = 7 (128chips/symbol), CRC on
-  if (!rf95.init()) {
+  if (!rf95->init()) {
     cerr << "RF95 init failed !" << endl;
     exit (EXIT_FAILURE);
   }
 
   // Setup ISM frequency
-  rf95.setFrequency (frequency);
+  rf95->setFrequency (frequency);
 
 
-  // rf95.printRegisters (Console);
-  cout << "Waiting for incoming messages...." << endl;
+  // rf95->printRegisters (Console);
+  std::cout << "Waiting for incoming messages...." << endl;
   if (isDaemon) {
 
     Piduino::Syslog.open();
@@ -194,7 +252,7 @@ void loop() {
       // CRC Check
       if (crc == calcCrc (txbuf[0], txbuf + 1, txlen - 3)) {
 
-        t0 = micros(); // on mémorise le temps pour le calcul du temps de réponse
+        t0 = micros(); // we save the time of the last message for calculating the delay between the request and the response
         driver->send (txbuf, txlen);
       }
       else {
@@ -205,7 +263,7 @@ void loop() {
     else {
 
       // message trop court
-      cout << "Message flushed ! > ";
+      std::cout << "Message flushed ! > ";
     }
     // On affiche le message et on rétablit le compteur txlen
     printModbusMessage (txbuf, txlen);
@@ -225,27 +283,25 @@ void loop() {
         serial.flush(); // on vide le buffer interne pour forcer l'envoi
         // On affiche le message reçu et le temps entre émission et réception
         printModbusMessage (rxbuf, rxlen, false);
-        cout << "Reply time: " << dt / 1000UL << "ms" << endl;
+        std::cout << "Reply time: " << dt / 1000UL << "ms" << endl;
       }
     }
   }
 }
 
-// Affiche un message modbus sur la console en Hexa
-void printModbusMessage (const uint8_t * msg, uint8_t len, bool req) {
+// Print modbus message on console in Hexa
+void printModbusMessage (const uint8_t *msg, uint8_t len, bool req) {
 
   if (len) {
-    char str[3]; // buffer pour sprintf
+    char str[3]; // buffer for the hexadecimal representation of the byte
     for (uint8_t i = 0; i < len; i++) {
 
-      sprintf (str, "%02X", msg[i]); // str contient la chaîne de caractères de la représentation hexa de l'octet
-      cout << (req ? '[' : '<') << str << (req ? ']' : '>');
+      sprintf (str, "%02X", msg[i]); // str store the string with the hexadecimal representation of the byte
+      std::cout << (req ? '[' : '<') << str << (req ? ']' : '>');
     }
-    cout <<  endl;
+    std::cout <<  endl;
   }
 }
-
-
 
 /* Table of CRC values for highorder byte */
 const byte _auchCRCHi[] = {
@@ -291,7 +347,13 @@ const byte _auchCRCLo[] = {
   0x40
 };
 
-word calcCrc (byte address, byte* pduFrame, byte pduLen) {
+// return the CRC of the message
+// address: 1st byte of the message
+// pduFrame: pointer to the message
+// pduLen: length of the message
+// CRC is calculated on the address and the PDU frame
+// CRC is 2 bytes long, high byte first
+word calcCrc (byte address, byte *pduFrame, byte pduLen) {
   byte CRCHi = 0xFF, CRCLo = 0x0FF, Index;
 
   Index = CRCHi ^ address;
