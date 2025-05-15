@@ -13,8 +13,8 @@ version.*
 *build-*/
 work/
 *.mk
-*.txt
 Makefile
 Release/
 Debug/
+*build*/
 
