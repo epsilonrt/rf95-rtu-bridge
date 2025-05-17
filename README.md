@@ -104,11 +104,15 @@ Allowed options:
   -h, --help                   produce help message
   -v, --verbose                be verbose
   -D, --daemon                 be daemonized
-  -b, --baudrate arg (=38400)  set serial baudrate
-  -t, --txled arg              set the Tx led pin number (Ino number if --wirebus not used)
-  -r, --rxled arg              set the Rx led pin number (Ino number if --wirebus not used)
-  -w, --wirebus arg            set the wire bus where a PCF8574 wich Tx and/or Rx led is connected
-  -k, --key arg                secret key for AES128 encryption, must be 16 characters long
+  -b, --baudrate arg (=38400)  sets serial baudrate
+  -t, --tx-led arg             sets the Tx led pin number (Ino number if --wirebus not used)
+  -r, --rx-led arg             sets the Rx led pin number (Ino number if --wirebus not used)
+  -y, --wire-bus arg           sets the wire bus where a PCF8574 wich Tx and/or Rx led is connected
+  -k, --key arg                sets the secret key for AES128 encryption, must be 16 characters long
+  -p, --tx-power arg           sets the transmitter power output level (5..23, default 13 dBm)
+  -s, --spreading-factor arg   sets the radio spreading factor (6..12, default 7)
+  -w, --bandwidth arg          sets the radio signal bandwidth in Hz (62500, 125000, 250000, 500000, default 125000)
+  -c, --coding-rate arg        sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)
 ```
 
 ## Building and Running on the Arduino Board

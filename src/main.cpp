@@ -6,14 +6,18 @@
 // rf95_rtu_bridge [OPTION]... serial_port
 //   serial_port:  serial port path, eg /dev/ttyUSB0, /dev/tnt1...
 // Allowed options:
-//   -h, --help                   produce help message
-//   -v, --verbose                be verbose
-//   -D, --daemon                 be daemonized
-//   -b, --baudrate arg (=38400)  set serial baudrate
-//   -t, --txled arg              set the Tx led pin number (Ino number if --wirebus not used)
-//   -r, --rxled arg              set the Rx led pin number (Ino number if --wirebus not used)
-//   -w, --wirebus arg            set the wire bus where a PCF8574 wich Tx and/or Rx led is connected
-//   -k, --key arg                secret key for AES128 encryption, must be 16 characters long//
+// -h, --help                   produce help message
+// -v, --verbose                be verbose
+// -D, --daemon                 be daemonized
+// -b, --baudrate arg (=38400)  sets serial baudrate
+// -t, --tx-led arg             sets the Tx led pin number (Ino number if --wirebus not used)
+// -r, --rx-led arg             sets the Rx led pin number (Ino number if --wirebus not used)
+// -y, --wire-bus arg           sets the wire bus where a PCF8574 wich Tx and/or Rx led is connected
+// -k, --key arg                sets the secret key for AES128 encryption, must be 16 characters long
+// -p, --tx-power arg           sets the transmitter power output level (5..23, default 13 dBm)
+// -s, --spreading-factor arg   sets the radio spreading factor (6..12, default 7)
+// -w, --bandwidth arg          sets the radio signal bandwidth in Hz (62500, 125000, 250000, 500000, default 125000)
+// -c, --coding-rate arg        sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)
 // This example code is in the public domain.
 #include <Piduino.h>  // All the magic is here ;-)
 #include <SPI.h>
@@ -49,7 +53,7 @@ Piduino::SerialPort serial;
 
 // Led controler on NanoPi4DinBox
 // cf https://github.com/epsilonrt/poo-toolbox
-Pcf8574 pcf8574; 
+Pcf8574 pcf8574;
 
 //  Tx and Rx led which are used to indicate the transmission and reception of data
 RHPin *txled = nullptr; // Pointer on the led Tx (GPIO pin or PCF8574)
@@ -80,11 +84,15 @@ void setup() {
   auto help_option = op.get_option<Piduino::Switch> ('h');
 
   auto verbose_option = op.get_option<Piduino::Switch> ('v');
-  auto baudrate_option = op.add<Piduino::Value<unsigned long>> ("b", "baudrate", "set serial baudrate", 38400);
-  auto txled_option = op.add<Piduino::Value<int>> ("t", "txled", "set the Tx led pin number (Ino number if --wirebus not used)");
-  auto rxled_option = op.add<Piduino::Value<int>> ("r", "rxled", "set the Rx led pin number (Ino number if --wirebus not used)");
-  auto wirebus_option = op.add<Piduino::Value<int>> ("w", "wirebus", "set the wire bus where a PCF8574 wich Tx and/or Rx led is connected");
-  auto key_option = op.add<Piduino::Value<std::string>> ("k", "key", "secret key for AES128 encryption, must be 16 characters long");
+  auto baudrate_option = op.add<Piduino::Value<unsigned long>> ("b", "baudrate", "sets serial baudrate", 38400);
+  auto txled_option = op.add<Piduino::Value<int>> ("t", "tx-led", "sets the Tx led pin number (Ino number if --wirebus not used)");
+  auto rxled_option = op.add<Piduino::Value<int>> ("r", "rx-led", "sets the Rx led pin number (Ino number if --wirebus not used)");
+  auto wirebus_option = op.add<Piduino::Value<int>> ("y", "wire-bus", "sets the wire bus where a PCF8574 wich Tx and/or Rx led is connected");
+  auto key_option = op.add<Piduino::Value<std::string>> ("k", "key", "sets the secret key for AES128 encryption, must be 16 characters long");
+  auto txpower_option = op.add<Piduino::Value<int>> ("p", "tx-power", "sets the transmitter power output level (5..23, default 13 dBm)");
+  auto spfactor_option = op.add<Piduino::Value<int>> ("s", "spreading-factor", "sets the radio spreading factor (6..12, default 7)");
+  auto bw_option = op.add<Piduino::Value<int>> ("w", "bandwidth", "sets the radio signal bandwidth in Hz (62500, 125000, 250000, 500000, default 125000)");
+  auto cdrate_option = op.add<Piduino::Value<int>> ("c", "coding-rate", "sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)");
   op.parse (argc, argv);
 
 
@@ -218,6 +226,45 @@ void setup() {
   // Setup ISM frequency
   rf95->setFrequency (frequency);
 
+  if (txpower_option->is_set()) {
+    int txPower = txpower_option->value();
+
+    if (txPower < 5 || txPower > 23) {
+      cerr << "Invalid Tx power, must be between 5 and 23 dBm" << endl;
+      exit (EXIT_FAILURE);
+    }
+    rf95->setTxPower (txPower);
+  }
+
+  if (spfactor_option->is_set()) {
+    int spFactor = spfactor_option->value();
+
+    if (spFactor < 6 || spFactor > 12) {
+      cerr << "Invalid Spreading factor, must be between 6 and 12" << endl;
+      exit (EXIT_FAILURE);
+    }
+    rf95->setSpreadingFactor (spFactor);
+  }
+
+  if (bw_option->is_set()) {
+    int sbw = bw_option->value();
+
+    if (sbw < 62500 || sbw > 500000) {
+      cerr << "Invalid Bandwidth, must be between 62500 and 500000 Hz" << endl;
+      exit (EXIT_FAILURE);
+    }
+    rf95->setSignalBandwidth (sbw);
+  }
+
+  if (cdrate_option->is_set()) {
+    int cdrate = cdrate_option->value();
+
+    if (cdrate < 5 || cdrate > 8) {
+      cerr << "Invalid Coding rate, must be between 5 and 8" << endl;
+      exit (EXIT_FAILURE);
+    }
+    rf95->setCodingRate4 (cdrate);
+  }
 
   // rf95->printRegisters (Console);
   std::cout << "Waiting for incoming messages...." << endl;
