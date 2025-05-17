@@ -86,7 +86,9 @@ sudo make install
 
 To enable AES128 encryption, provide an encryption key with the `-k` option:
 
-  rf95_rtu_bridge --key 1234567890abcdef /dev/tnt0
+```bash
+rf95_rtu_bridge --key 1234567890abcdef /dev/tnt0
+```
 
 Make sure the same encryption key is set in the Arduino sketch!
 
@@ -94,7 +96,7 @@ Make sure the same encryption key is set in the Arduino sketch!
 
 The command includes a help page:
 
-```
+```bash
 $ rf95_rtu_bridge -h
 rf95_rtu_bridge [OPTION]... serial_port
   serial_port:  serial port path, eg /dev/ttyUSB0, /dev/tnt1...
@@ -121,16 +123,12 @@ If you use encryption, update the encryption key and set `isEncrypted` to `true`
 
 You can use `mbpoll` to send a test Modbus command:
 
-   mbpoll -m rtu -b38400 -a20 -t0 -r1 -c3 -v /dev/tnt1
+
+```bash
+mbpoll -m rtu -b38400 -a10 -t0 -r1 -c3 -v /dev/tnt1
+```
 
 ![mbpoll](https://github.com/epsilonrt/rf95-rtu-bridge/blob/main/doc/images/mbpoll.png)
-Serial Modbus RTU to RFM95 LoRa bridge
-
-This project demonstrates how to perform MODBUS message transmission over LoRa using RFM95 modules.
-
-Here we are using a NanoPi or Raspberry Pi board which transmits to an other board equipped with an RFM95 module. The latter is connected to a Modbus RTU slave device (for example, a PLC or a sensor). The Pi board acts as a Modbus master and communicates with the slave device or vice versa.  
-
-The libmodbuspp library can be used to perform Modbus RTU communication tests on the Pi board by connecting to the virtual serial port connected to the bridge (see below).
 
 ## More Complex Scenarios
 
