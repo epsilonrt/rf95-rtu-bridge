@@ -6,19 +6,20 @@
 // rf95_rtu_bridge [OPTION]... serial_port
 //   serial_port:  serial port path, eg /dev/ttyUSB0, /dev/tnt1...
 // Allowed options:
-// -h, --help                   produce help message
-// -v, --verbose                be verbose
-// -D, --daemon                 be daemonized
-// -b, --baudrate arg (=38400)  sets serial baudrate
-// -t, --tx-led arg             sets the Tx led pin number (Ino number if --wirebus not used)
-// -r, --rx-led arg             sets the Rx led pin number (Ino number if --wirebus not used)
-// -y, --wire-bus arg           sets the wire bus where a PCF8574 wich Tx and/or Rx led is connected
-// -k, --key arg                sets the secret key for AES128 encryption, must be 16 characters long
-// -p, --tx-power arg           sets the transmitter power output level (5..23, default 13 dBm)
-// -s, --spreading-factor arg   sets the radio spreading factor (6..12, default 7)
-// -w, --bandwidth arg          sets the radio signal bandwidth in Hz (62500, 125000, 250000, 500000, default 125000)
-// -c, --coding-rate arg        sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)
-// This example code is in the public domain.
+//   -h, --help                   produce help message
+//   -v, --verbose                be verbose
+//   -D, --daemon                 be daemonized
+//   -q, --quiet                  be quiet, if set, there is no output on the console
+//   -c, --cs-pin arg             sets the chip select pin number, must be set ! > use `pido readall` to find the pin number
+//   -d, --dio0-pin arg           sets the dio0 pin number, must be set !        > use `pido readall` to find the pin number
+//   -l, --led-pin arg            sets the Rx/Tx led pin number (optionnal)      > use `pido readall` to find the pin number
+//   -y, --wire-bus arg           sets the wire bus where a PCF8574 wich Rx/Tx led is connected
+//   -b, --baudrate arg (=38400)  sets serial baudrate
+//   -k, --key arg                sets the secret key for AES128 encryption, must be 16 characters long
+//   -p, --tx-power arg           sets the transmitter power output level in dBm (5..23, default 13)
+//   -s, --spreading-factor arg   sets the radio spreading factor (6..12, default 7)
+//   -w, --bandwidth arg          sets the radio signal bandwidth in Hz (62500, 125000, 250000, 500000, default 125000)
+//   -r, --coding-rate arg        sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)
 #include <Piduino.h>  // All the magic is here ;-)
 #include <SPI.h>
 #include <RH_RF95.h>
@@ -27,16 +28,21 @@
 #include <RHEncryptedDriver.h>
 #include <AES.h>
 
-// Choose or modify the following lines to match your hardware configuration
 // ---------------------------
+// --cs-pin and --dio0-pin options must be set
+// The CS pin and the DIO0 pin must be set with the Arduino pin number
+// The CS pin is used to select the RF95 module
+// The DIO0 pin is used to detect the end of the transmission
+// Use the following command to find the pin number:
+// $ pido readall
 
 // NanoPi /dev/spidev0.0
-// uint8_t CsPin = 10;
-// uint8_t Dio0Pin = 0;
+// csPin   = 10
+// dio0Pin = 0
 
 // LoRasSpi /dev/spidev0.0
-uint8_t CsPin = 10;
-uint8_t Dio0Pin = 6;
+// csPin   = 10
+// dio0Pin = 6
 
 float frequency = 868.0;
 // ---------------------------
@@ -56,14 +62,14 @@ Piduino::SerialPort serial;
 Pcf8574 pcf8574;
 
 //  Tx and Rx led which are used to indicate the transmission and reception of data
-RHPin *txled = nullptr; // Pointer on the led Tx (GPIO pin or PCF8574)
-RHPin *rxled = nullptr; // Pointer on the led Rx (GPIO pin or PCF8574)
+RHPin *led = nullptr; // Pointer on the led Tx (GPIO pin or PCF8574)
 
 unsigned long charInterval; // maximum time  between 2 characters (1.5c)
 unsigned long frameInterval; // minimum time between 2 frames (3.5c)
 unsigned long t0; // time of the last request
 uint8_t txlen; // length of the string from the serial port
 bool isEncrypted = false;
+bool isQuiet = false; // if true, no output on the console
 
 using namespace std;
 
@@ -81,20 +87,21 @@ void setup() {
   // Setting up command line options and parameters, cf
   // https://github.com/epsilonrt/popl/blob/master/example/popl_example.cpp
   Piduino::OptionParser &op = CmdLine;
-  auto help_option = op.get_option<Piduino::Switch> ('h');
+  auto help_option = op.get_option<Piduino::Switch> ('h'); // declared in Piduino.h
+  auto verbose_option = op.get_option<Piduino::Switch> ('v'); // declared in Piduino.h
 
-  auto verbose_option = op.get_option<Piduino::Switch> ('v');
+  auto quiet_option = op.add<Piduino::Switch> ("q", "quiet", "be quiet, if set, there is no output on the console");
+  auto cspin_option = op.add<Piduino::Value<int>> ("c", "cs-pin",     "sets the chip select pin number, must be set ! > use `pido readall` to find the pin number");
+  auto dio0pin_option = op.add<Piduino::Value<int>> ("d", "dio0-pin", "sets the dio0 pin number, must be set !        > use `pido readall` to find the pin number");
+  auto led_option = op.add<Piduino::Value<int>> ("l", "led-pin",      "sets the Rx/Tx led pin number (optionnal)      > use `pido readall` to find the pin number");
+  auto wirebus_option = op.add<Piduino::Value<int>> ("y", "wire-bus", "sets the wire bus where a PCF8574 wich Rx/Tx led is connected");
   auto baudrate_option = op.add<Piduino::Value<unsigned long>> ("b", "baudrate", "sets serial baudrate", 38400);
-  auto txled_option = op.add<Piduino::Value<int>> ("t", "tx-led", "sets the Tx led pin number (Ino number if --wirebus not used)");
-  auto rxled_option = op.add<Piduino::Value<int>> ("r", "rx-led", "sets the Rx led pin number (Ino number if --wirebus not used)");
-  auto wirebus_option = op.add<Piduino::Value<int>> ("y", "wire-bus", "sets the wire bus where a PCF8574 wich Tx and/or Rx led is connected");
   auto key_option = op.add<Piduino::Value<std::string>> ("k", "key", "sets the secret key for AES128 encryption, must be 16 characters long");
-  auto txpower_option = op.add<Piduino::Value<int>> ("p", "tx-power", "sets the transmitter power output level (5..23, default 13 dBm)");
+  auto txpower_option = op.add<Piduino::Value<int>> ("p", "tx-power", "sets the transmitter power output level in dBm (5..23, default 13)");
   auto spfactor_option = op.add<Piduino::Value<int>> ("s", "spreading-factor", "sets the radio spreading factor (6..12, default 7)");
   auto bw_option = op.add<Piduino::Value<int>> ("w", "bandwidth", "sets the radio signal bandwidth in Hz (62500, 125000, 250000, 500000, default 125000)");
-  auto cdrate_option = op.add<Piduino::Value<int>> ("c", "coding-rate", "sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)");
+  auto codrate_option = op.add<Piduino::Value<int>> ("r", "coding-rate", "sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)");
   op.parse (argc, argv);
-
 
   if (help_option->is_set()) {
 
@@ -104,14 +111,29 @@ void setup() {
     exit (EXIT_SUCCESS);
   }
 
-  if (op.non_option_args().size() < 1) {
+    if (op.non_option_args().size() < 1) {
 
     cerr << "A serial port must be specified!" << endl << op << endl;
     exit (EXIT_FAILURE);
   }
 
+  if (! cspin_option->is_set() || ! dio0pin_option->is_set()) {
+    cerr << "The --cs-pin and --dio0-pin options must be set!" << endl << op << endl;
+    exit (EXIT_FAILURE);
+  }
+
+
+  isQuiet = quiet_option->is_set();
+  if (isQuiet) {
+
+    verbose_option->set_value (false);
+  }
+
+  int csPin = cspin_option->value();
+  int dio0Pin = dio0pin_option->value();
+
   // TODO: detect the default spidev device with Piduino::System::findSpidev()
-  rf95 = new RH_RF95 (CsPin, Dio0Pin); // Pointeur sur le driver RF95
+  rf95 = new RH_RF95 (csPin, dio0Pin); // Pointeur sur le driver RF95
 
   if (key_option->is_set()) {
     string  key = key_option->value();
@@ -119,8 +141,9 @@ void setup() {
     if (cipher.setKey (reinterpret_cast<const uint8_t *> (key.data()), key.size())) {
 
       encryptDrv = new RHEncryptedDriver (*rf95, cipher); // Driver qui assemble chiffreur et transmetteur RF
-
-      std::cout << "Encryption enabled" << endl;
+      if (!isQuiet) {
+        std::cout <<  "Encryption enabled" << endl;
+      }
       driver = encryptDrv;
       isEncrypted = true;
     }
@@ -135,8 +158,8 @@ void setup() {
     driver = rf95;
   }
 
-  if (txled_option->is_set() || rxled_option->is_set()) {
-    // process the --txled and --rxled options
+  if (led_option->is_set()) {
+    // process the --led option
     // if --wirebus is not set, we use GPIO pins
 
     if (wirebus_option->is_set()) {
@@ -150,37 +173,28 @@ void setup() {
         cerr << "Unable to connect to PCF8574. Please check the wiring, slave address, and bus ID!" << endl;
         exit (EXIT_FAILURE);
       }
-      if (txled_option->is_set()) {
-        int txLedPin = txled_option->value();
+      if (led_option->is_set()) {
+        int ledPin = led_option->value();
 
-        txled = new RHPcf8574Pin (txLedPin, pcf8574); // Led Tx
-        std::cout << "Use PCF8574 on bus " << wireBus << " for Tx led " << txLedPin << endl;
-        rf95->setTxLed (*txled);
+        led = new RHPcf8574Pin (ledPin, pcf8574); // Led Tx
+        if (verbose_option->is_set()) {
+          std::cout << Piduino::System::progName() << ": " << "Use PCF8574 on bus " << wireBus << " for Rx/Tx led " << ledPin << endl;
+        }
+        rf95->setTxLed (*led);
+        rf95->setRxLed (*led);
       }
-      if (rxled_option->is_set()) {
-        int rxLedPin = rxled_option->value();
-
-        rxled = new RHPcf8574Pin (rxLedPin, pcf8574); // Led Rx
-        std::cout << "Use PCF8574 on bus " << wireBus << " for Rx led " << rxLedPin << endl;
-        rf95->setRxLed (*rxled);
-      }
-
     }
     else {
 
-      if (rxled_option->is_set()) {
-        int rxLedPin = rxled_option->value();
+      if (led_option->is_set()) {
+        int ledPin = led_option->value();
 
-        rxled = new RHGpioPin (rxLedPin); // Led Rx
-        std::cout << "Use GPIO pin " << rxLedPin << " for Rx led" << endl;
-        rf95->setRxLed (*rxled);
-      }
-      if (txled_option->is_set()) {
-        int txLedPin = txled_option->value();
-
-        txled = new RHGpioPin (txLedPin); // Led Tx
-        std::cout << "Use GPIO pin " << txLedPin << " for Tx led" << endl;
-        rf95->setTxLed (*txled);
+        led = new RHGpioPin (ledPin); // Led Tx
+        if (verbose_option->is_set()) {
+          std::cout << Piduino::System::progName() << ": " << "Use GPIO pin " << ledPin << " for Rx/Tx led" << endl;
+        }
+        rf95->setTxLed (*led);
+        rf95->setRxLed (*led);
       }
     }
   }
@@ -213,8 +227,15 @@ void setup() {
     charInterval = 16500000UL / baudrate; // 1T * 1.5 = T1.5, 1T = 11 bits
     frameInterval = 38500000UL / baudrate; // 1T * 3.5 = T3.5, 1T = 11 bits
   }
+  if (!isQuiet) {
+    std::cout << Piduino::System::progName() << ": " << portName << ", " << baudrate << " bd, " << frameInterval << "us" << endl;
+  }
 
-  std::cout << Piduino::System::progName() << ": " << portName << ", " << baudrate << " bd, " << frameInterval << "us" << endl;
+  if (verbose_option->is_set()) {
+
+    const Piduino::SpiDev::Info &spiInfo = Piduino::SpiDev::Info::defaultBus();
+    std::cout << Piduino::System::progName() << ": " << "Connecting the RFM95 to the SPI bus " << spiInfo.path() << endl;
+  }
 
   // Defaults after init are 434.0MHz, 13dBm,
   // Bw = 125 kHz, Cr = 5 (4/5), Sf = 7 (128chips/symbol), CRC on
@@ -257,8 +278,8 @@ void setup() {
     rf95->setSignalBandwidth (sbw);
   }
 
-  if (cdrate_option->is_set()) {
-    int cdrate = cdrate_option->value();
+  if (codrate_option->is_set()) {
+    int cdrate = codrate_option->value();
 
     if (cdrate < 5 || cdrate > 8) {
       cerr << "Invalid Coding rate, must be between 5 and 8" << endl;
@@ -268,7 +289,9 @@ void setup() {
   }
 
   // rf95->printRegisters (Console);
-  std::cout << "Waiting for incoming messages...." << endl;
+  if (!isQuiet) {
+    std::cout << "Waiting for incoming messages...." << endl;
+  }
   if (isDaemon) {
 
     Piduino::Syslog.open();
@@ -311,10 +334,14 @@ void loop() {
     else {
 
       // message trop court
-      std::cout << "Message flushed ! > ";
+      if (!isQuiet) {
+        std::cout << Piduino::System::progName() << ": " << "Message flushed ! > ";
+      }
     }
     // On affiche le message et on rétablit le compteur txlen
-    printModbusMessage (txbuf, txlen);
+    if (!isQuiet) {
+      printModbusMessage (txbuf, txlen);
+    }
     txlen = 0;
   }
 
@@ -330,8 +357,10 @@ void loop() {
         unsigned long dt = micros() - t0;
         serial.flush(); // on vide le buffer interne pour forcer l'envoi
         // On affiche le message reçu et le temps entre émission et réception
-        printModbusMessage (rxbuf, rxlen, false);
-        std::cout << "Reply time: " << dt / 1000UL << "ms" << endl;
+        if (!isQuiet) {
+          printModbusMessage (rxbuf, rxlen, false);
+          std::cout << "Reply time: " << dt / 1000UL << "ms" << endl;
+        }
       }
     }
   }
