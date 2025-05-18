@@ -218,6 +218,7 @@ void setup() {
 
   // Defaults after init are 434.0MHz, 13dBm,
   // Bw = 125 kHz, Cr = 5 (4/5), Sf = 7 (128chips/symbol), CRC on
+
   if (!rf95->init()) {
     cerr << "RF95 init failed !" << endl;
     exit (EXIT_FAILURE);

@@ -10,7 +10,6 @@ compile_commands.json
 obj/
 .*
 version.*
-*build-*/
 work/
 *.mk
 Makefile
