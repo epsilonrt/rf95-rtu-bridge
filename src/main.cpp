@@ -21,6 +21,7 @@
 //   -w, --bandwidth arg          sets the radio signal bandwidth in Hz (62500, 125000, 250000, 500000, default 125000)
 //   -r, --coding-rate arg        sets the coding rate to 4/5, 4/6, 4/7 or 4/8 (denominator 5..8, default 5)
 #include <Piduino.h>  // All the magic is here ;-)
+#include <csignal>
 #include <SPI.h>
 #include <RH_RF95.h>
 #include <RHPcf8574Pin.h>
@@ -82,6 +83,9 @@ void printModbusMessage (const uint8_t *msg, uint8_t len, bool req = true);
 // Calcule le CRC d'une trame
 word calcCrc (byte address, byte *pduFrame, byte pduLen);
 
+// Interception handler for SIGINT and SIGTERM
+void sig_handler (int sig);
+
 void setup() {
 
   // Setting up command line options and parameters, cf
@@ -111,7 +115,7 @@ void setup() {
     exit (EXIT_SUCCESS);
   }
 
-    if (op.non_option_args().size() < 1) {
+  if (op.non_option_args().size() < 1) {
 
     cerr << "A serial port must be specified!" << endl << op << endl;
     exit (EXIT_FAILURE);
@@ -132,7 +136,6 @@ void setup() {
   int csPin = cspin_option->value();
   int dio0Pin = dio0pin_option->value();
 
-  // TODO: detect the default spidev device with Piduino::System::findSpidev()
   rf95 = new RH_RF95 (csPin, dio0Pin); // Pointeur sur le driver RF95
 
   if (key_option->is_set()) {
@@ -197,6 +200,10 @@ void setup() {
         rf95->setRxLed (*led);
       }
     }
+
+    // sig_handler() intercepte le CTRL+C
+    signal (SIGINT, sig_handler);
+    signal (SIGTERM, sig_handler);
   }
 
   string portName = op.non_option_args() [0];
@@ -233,13 +240,14 @@ void setup() {
 
   if (verbose_option->is_set()) {
 
-    const Piduino::SpiDev::Info &spiInfo = Piduino::SpiDev::Info::defaultBus();
-    std::cout << Piduino::System::progName() << ": " << "Connecting the RFM95 to the SPI bus " << spiInfo.path() << endl;
+    std::cout << Piduino::System::progName() << ": " << "Connecting the RFM95 to the SPI bus " << SPI.defaultBusPath() << endl;
   }
+
+  // Uncomment the following line and modify bus id and cs id if the default bus is not detected
+  // SPI.setDefaultBus (0, 0); // Set the default SPI bus to bus 0, cs 0 (/dev/spidev0.0)
 
   // Defaults after init are 434.0MHz, 13dBm,
   // Bw = 125 kHz, Cr = 5 (4/5), Sf = 7 (128chips/symbol), CRC on
-
   if (!rf95->init()) {
     cerr << "RF95 init failed !" << endl;
     exit (EXIT_FAILURE);
@@ -444,4 +452,25 @@ word calcCrc (byte address, byte *pduFrame, byte pduLen) {
   }
 
   return (CRCHi << 8) | CRCLo;
+}
+
+// -----------------------------------------------------------------------------
+void
+sig_handler (int sig) {
+
+  if (rf95) {
+
+    SPI.end(); // Stop the SPI bus
+    Wire.end(); // Stop the I2C bus
+    delete rf95; // Delete the RF95 driver
+    rf95 = nullptr; //  Pointer on the RF95 driver
+    delete encryptDrv; // Delete the encrypted driver
+    encryptDrv = nullptr; //  Pointer on the encrypted driver
+    delete led;
+    led = nullptr; // Pointer on the led driver
+    
+    cout << endl << "everything was closed.";
+  }
+  cout << endl << "Have a nice day !" << endl;
+  exit (EXIT_SUCCESS);
 }
