@@ -2,3 +2,7 @@
 	path = 3rdparty/poo-toolbox
 	url = https://github.com/epsilonrt/poo-toolbox
 	branch = master
+[submodule "poo-toolbox"]
+	path = poo-toolbox
+	url = https://github.com/epsilonrt/poo-toolbox
+	branch = master
