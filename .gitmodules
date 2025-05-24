@@ -1,4 +1,4 @@
 [submodule "3rdparty/poo-toolbox"]
 	path = 3rdparty/poo-toolbox
 	url = https://github.com/epsilonrt/poo-toolbox
-  branch = master
+	branch = master
